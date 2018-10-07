@@ -773,6 +773,7 @@ def benchmark_one_step(sess,
   if image_producer is not None:
     image_producer.notify_image_consumption()
   train_time = time.time() - start_time
+  log_fn('Training time is %.5f' % train_time)
   step_train_times.append(train_time)
   if (show_images_per_sec and step >= 0 and
       (step == 0 or (step + 1) % params.display_every == 0)):
