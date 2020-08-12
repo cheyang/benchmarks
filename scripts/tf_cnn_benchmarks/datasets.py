@@ -26,7 +26,7 @@ import numpy as np
 import six
 from six.moves import cPickle
 from six.moves import xrange  # pylint: disable=redefined-builtin
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
 from tensorflow.python.platform import gfile
 import preprocessing
@@ -52,7 +52,7 @@ class Dataset(object):
     self._num_classes = num_classes
 
   def tf_record_pattern(self, subset):
-    return os.path.join(self.data_dir, '%s-*-of-*' % subset)
+    return os.path.join(self.data_dir, subset, '%s-*-of-*' % subset)
 
   def reader(self):
     return tf.TFRecordReader()

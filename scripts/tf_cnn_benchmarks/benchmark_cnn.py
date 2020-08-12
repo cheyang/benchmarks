@@ -37,9 +37,8 @@ import numpy as np
 
 import six
 from six.moves import xrange  # pylint: disable=redefined-builtin
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
-# pylint: disable=g-direct-tensorflow-import
 import cnn_util
 import constants
 import datasets
@@ -212,7 +211,7 @@ flags.DEFINE_string('resize_method', 'bilinear',
                     'a round-robin fashion. Other modes support any sizes and '
                     'apply random bbox distortions before resizing (even with '
                     'distortions=False).')
-flags.DEFINE_boolean('distortions', False,
+flags.DEFINE_boolean('distortions', True,
                      'Enable/disable distortions during image preprocessing. '
                      'These include bbox and color distortions.')
 flags.DEFINE_boolean('use_datasets', True,
@@ -786,7 +785,8 @@ def create_config_proto(params):
         rewriter_config_pb2.RewriterConfig.ON)
     rewrite_options.scoped_allocator_opts.enable_op.append('CollectiveReduce')
   if params.variable_update == 'horovod':
-    import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+    # import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+    import horovod.tensorflow as hvd
     config.gpu_options.visible_device_list = str(hvd.local_rank())
   # For collective_all_reduce, ignore all devices except current worker.
   if params.variable_update == 'collective_all_reduce':
@@ -1506,7 +1506,8 @@ class BenchmarkCNN(object):
     if self.cluster_manager:
       self.num_workers = self.cluster_manager.num_workers()
     elif self.params.variable_update == 'horovod':
-      import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+      # import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+      import horovod.tensorflow as hvd
       self.num_workers = hvd.size()
     else:
       self.num_workers = 1
@@ -1551,8 +1552,8 @@ class BenchmarkCNN(object):
     if self.params.eval_during_training_every_n_epochs:
       n_epochs = self.params.eval_during_training_every_n_epochs
       self.eval_during_training_at_specified_steps = {
-          (int(e * num_train_examples_per_epoch + self.batch_size - 1) //
-           self.batch_size)
+          (int(e * num_train_examples_per_epoch + self.batch_size * self.num_workers - 1) //
+           (self.batch_size * self.num_workers))
           for e in np.arange(n_epochs, self.num_epochs, n_epochs)}
 
     if self.params.eval_during_training_at_specified_steps:
@@ -1573,8 +1574,8 @@ class BenchmarkCNN(object):
           offset = int(offset)
         mlperf.logger.log(key=mlperf.tags.EVAL_EPOCH_OFFSET, value=offset)
         self.eval_during_training_at_specified_steps = {
-            (int(e * num_train_examples_per_epoch + self.batch_size - 1) //
-             self.batch_size)
+            (int(e * num_train_examples_per_epoch + self.batch_size * self.num_workers - 1) //
+             (self.batch_size * self.num_workers))
             for e in n_epochs}
       except ValueError:
         raise ValueError('Param eval_during_training_at_specified_epochs value '
@@ -2021,8 +2022,13 @@ class BenchmarkCNN(object):
         if image_producer is not None:
           image_producer.notify_image_consumption()
       loop_end_time = time.time()
-      accuracy_at_1 = top_1_accuracy_sum / self.num_batches
-      accuracy_at_5 = top_5_accuracy_sum / self.num_batches
+      from mpi4py import MPI
+      comm = MPI.COMM_WORLD
+      comm.barrier()
+      top_1_accuracy_sum = comm.allreduce(top_1_accuracy_sum)
+      top_5_accuracy_sum = comm.allreduce(top_5_accuracy_sum)
+      accuracy_at_1 = top_1_accuracy_sum / self.num_batches / self.num_workers
+      accuracy_at_5 = top_5_accuracy_sum / self.num_batches / self.num_workers
       summary = tf.Summary()
       summary.value.add(tag='eval/Accuracy@1', simple_value=accuracy_at_1)
       summary.value.add(tag='eval/Accuracy@5', simple_value=accuracy_at_5)
@@ -2034,7 +2040,7 @@ class BenchmarkCNN(object):
       if summary_writer:
         summary_writer.add_summary(summary, global_step)
       log_fn('Accuracy @ 1 = %.4f Accuracy @ 5 = %.4f [%d examples]' %
-             (accuracy_at_1, accuracy_at_5, total_eval_count))
+             (accuracy_at_1, accuracy_at_5, total_eval_count * self.num_workers))
       elapsed_time = loop_end_time - loop_start_time
       images_per_sec = (self.num_batches * self.batch_size / elapsed_time)
       if self.mode != constants.BenchmarkMode.TRAIN_AND_EVAL:
@@ -2178,9 +2184,10 @@ class BenchmarkCNN(object):
     """
     log_fn('Initializing graph')
     if self.params.variable_update == 'horovod':
-      import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+      # import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
       # First worker will be 'chief' - it will write summaries and
       # save checkpoints.
+      import horovod.tensorflow as hvd
       is_chief = hvd.rank() == 0
     else:
       is_chief = (not self.job_name or self.task_index == 0)
@@ -2227,7 +2234,8 @@ class BenchmarkCNN(object):
       ready_for_local_init_op = tf.report_uninitialized_variables(
           tf.global_variables())
     if self.params.variable_update == 'horovod':
-      import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+      # import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+      import horovod.tensorflow as hvd
       bcast_global_variables_op = hvd.broadcast_global_variables(0)
     else:
       bcast_global_variables_op = None
@@ -2626,7 +2634,7 @@ class BenchmarkCNN(object):
     if self.params.trt_mode:
       # Import here instead of at top, because this will crash if TensorRT is
       # not installed
-      from tensorflow.python.compiler.tensorrt import trt_convert  # pylint: disable=g-import-not-at-top
+      from tensorflow.contrib import tensorrt as trt  # pylint: disable=g-import-not-at-top
       # Avoid TF-TRT bridge from touching all variable initializer ops and their
       # dependencies, since they can directly be fetched by sess.run()s that
       # initialize the variables.
@@ -2637,7 +2645,7 @@ class BenchmarkCNN(object):
           variable_initializers, name_to_input_name)
       # pylint: enable=protected-access
 
-      graphdef = trt_convert.create_inference_graph(
+      graphdef = trt.create_inference_graph(
           graphdef,
           outputs=output_node_names + list(initializer_subgraph_ops),
           max_batch_size=self.model.get_batch_size(),
@@ -2782,8 +2790,9 @@ class BenchmarkCNN(object):
 
     # Adjust seed so different workers start read different input files.
     if self.params.variable_update == 'horovod':
-      import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
-      seed_adjustment = hvd.rank()
+      # import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+      import horovod.tensorflow as hvd
+      seed_adjustment = 0
     else:
       seed_adjustment = 0
     mlperf.logger.log(key=mlperf.tags.RUN_SET_RANDOM_SEED,
@@ -3261,13 +3270,14 @@ class BenchmarkCNN(object):
         ]
 
       if self.params.variable_update == 'horovod':
-        import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+        # import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+        import horovod.tensorflow as hvd
         if self.params.horovod_device:
           horovod_device = '/%s:0' % self.params.horovod_device
         else:
           horovod_device = ''
         # All-reduce gradients using Horovod.
-        grads = [hvd.allreduce(grad, average=False, device_dense=horovod_device)
+        grads = [hvd.allreduce(grad, average=True, device_dense=horovod_device)
                  for grad in grads]
 
       if self.params.staged_vars:
@@ -3515,7 +3525,8 @@ def setup(params):
   # horovod needs to be initialized before create_config_proto() call since
   # it will be used in config generation if enabled.
   if params.variable_update == 'horovod':
-    import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+    # import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+    import horovod.tensorflow as hvd
     hvd.init()
 
   platforms_util.initialize(params, create_config_proto(params))

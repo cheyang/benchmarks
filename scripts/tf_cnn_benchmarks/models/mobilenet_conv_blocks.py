@@ -21,8 +21,9 @@ from __future__ import print_function
 import contextlib
 import functools
 
-import tensorflow.compat.v1 as tf
-from tensorflow.contrib import slim
+import tensorflow as tf
+
+slim = tf.contrib.slim
 
 
 def _fixed_padding(inputs, kernel_size, rate=1):
@@ -80,7 +81,7 @@ def _split_divisible(num, num_ways, divisible_by=8):
 
 
 @contextlib.contextmanager
-def _v1_compatible_scope_naming(scope):  # pylint: disable=g-missing-docstring
+def _v1_compatible_scope_naming(scope):
   if scope is None:  # Create uniqified separable blocks.
     with tf.variable_scope(None, default_name='separable') as s, \
          tf.name_scope(s.original_name_scope):

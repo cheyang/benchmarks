@@ -36,7 +36,7 @@ from __future__ import print_function
 
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 import datasets
 import mlperf
 from models import model as model_lib
@@ -332,6 +332,7 @@ class ResnetModel(model_lib.CNNModel):
     values = [rescaled_lr * v for v in values]
     lr = tf.train.piecewise_constant(global_step, boundaries, values)
     warmup_steps = int(num_batches_per_epoch * 5)
+    print(f'!!!!! warmup steps: {warmup_steps}, num_batches_per_epoch: {num_batches_per_epoch}')
     mlperf.logger.log(key=mlperf.tags.OPT_LR_WARMUP_STEPS, value=warmup_steps)
     warmup_lr = (
         rescaled_lr * tf.cast(global_step, tf.float32) / tf.cast(
